@@ -1,0 +1,26 @@
+{
+  "name": "wf-pipedrive",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "start": "vercel dev"
+  },
+  "type": "module",
+  "dependencies": {
+    "@hono/vite-dev-server": "^0.19.1",
+    "@supabase/supabase-js": "^2.50.0",
+    "gsap": "^3.13.0",
+    "hono": "^4.8.2",
+    "intl-tel-input": "^25.3.1",
+    "rollup-plugin-visualizer": "^6.0.3",
+    "swiper": "^11.2.8",
+    "vite-plugin-vercel": "^9.0.7"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vercel": "^32.7.2",
+    "vite": "^6.3.5"
+  }
+}
