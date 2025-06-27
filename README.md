@@ -102,6 +102,27 @@ This project provides a complete integration between Webflow forms and Pipedrive
      data JSONB NOT NULL,
      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
    );
+
+   -- Enable RLS on the form_submissions table
+   ALTER TABLE form_submissions ENABLE ROW LEVEL SECURITY;
+   
+   -- Create a policy that allows service role to insert data
+   -- This policy allows the service role (used by your API) to insert form submissions
+   CREATE POLICY "Service role can insert form submissions" ON form_submissions
+     FOR INSERT TO service_role
+     WITH CHECK (true);
+   
+   -- Create a policy that allows service role to read all data
+   -- This policy allows the service role to read form submissions for analytics/backup
+   CREATE POLICY "Service role can read form submissions" ON form_submissions
+     FOR SELECT TO service_role
+     USING (true);
+   
+   -- Optional: Create a policy for authenticated users to read their own submissions
+   -- This would require user authentication and a user_id column
+   -- CREATE POLICY "Users can read own submissions" ON form_submissions
+   --   FOR SELECT TO authenticated
+   --   USING (auth.uid() = user_id);
    ```
 
 2. **Get your project credentials:**

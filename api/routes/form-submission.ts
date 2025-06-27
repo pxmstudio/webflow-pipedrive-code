@@ -10,16 +10,75 @@ import { supabase } from "../lib/supabase";
 
 // Type definitions for better code clarity and type safety
 interface FormSubmissionData {
-    Email?: string;
-    "First-Name"?: string;
-    "Last-Name"?: string;
-    "Phone-Number"?: string;
-    "Job-Title"?: string;
-    Company?: string;
-    Message?: string;
+    [key: string]: string | undefined;
     form: string;
     source: string;
 }
+
+// Standardized field names for Pipedrive
+interface StandardizedFields {
+    email: string;
+    fullName: string;
+    phone?: string;
+    jobTitle?: string;
+    company?: string;
+    message?: string;
+}
+
+// Field mapping configuration - Users customize this based on their form structure
+interface FieldMapping {
+    email: string;
+    fullName: string | string[]; // Can be single field or array for first/last name
+    phone?: string;
+    jobTitle?: string;
+    company?: string;
+    message?: string;
+}
+
+// CONFIGURATION: Add your form field mappings here
+// Users should modify this object to match their form field names
+// 
+// How to use:
+// 1. Add a new entry with your form name as the key
+// 2. Map each standardized field to your actual form field name(s)
+// 3. For fullName, you can use either a single field name or an array for first/last name
+// 4. Optional fields can be omitted if your form doesn't have them
+//
+// Example form HTML:
+// <input name="work_email" type="email" required>
+// <input name="full_name" type="text" required>
+// <input name="contact_number" type="tel">
+// <input name="position" type="text">
+// <input name="organization" type="text">
+// <textarea name="requirements"></textarea>
+//
+// Corresponding mapping:
+// demo: {
+//     email: "work_email",
+//     fullName: "full_name", 
+//     phone: "contact_number",
+//     jobTitle: "position",
+//     company: "organization",
+//     message: "requirements"
+// }
+const FORM_FIELD_MAPPINGS: Record<string, FieldMapping> = {
+    // Example: Contact form
+    contact: {
+        email: "Email",
+        fullName: "name",
+        phone: "Phone-Number",
+        jobTitle: "Job-Title",
+        company: "Company",
+        message: "Message"
+    },
+
+    // Example: Newsletter signup form with separate first/last name fields
+    newsletter: {
+        email: "Email",
+        fullName: ["First-Name", "Last-Name"], // Will be combined,
+        company: "Company"
+    },
+};
 
 interface PipedrivePersonResponse {
     data: {
@@ -66,13 +125,14 @@ export async function formSubmission(c: Context): Promise<Response> {
 
         // Parse and validate the form data
         const formData = await c.req.formData();
-        const submissionData = await processFormSubmission(formData, formName, formSource);
+
+        const { rawData, standardized } = await processFormSubmission(formData, formName, formSource);
 
         // Store the submission in our database for backup/tracking
-        await storeSubmissionInDatabase(submissionData);
+        await storeSubmissionInDatabase(rawData);
 
         // Send the submission to Pipedrive CRM
-        await sendSubmissionToPipedrive(c, submissionData);
+        await sendSubmissionToPipedrive(standardized, formName, formSource);
 
         // Return success response
         return c.json({
@@ -97,10 +157,85 @@ export async function formSubmission(c: Context): Promise<Response> {
  */
 function extractUrlParams(c: Context): { formName: string; formSource: string } {
     const url = new URL(c.req.url);
+    const source = url.searchParams.get("source") || "Unknown";
+    const form = url.searchParams.get("form");
+
     return {
-        formName: url.searchParams.get("form") || "Unknown",
-        formSource: url.searchParams.get("source") || "Unknown"
+        formName: form || source, // Use source as form name if no explicit form parameter
+        formSource: source
     };
+}
+
+/**
+ * Standardizes form data using the configured field mappings
+ */
+function standardizeFormData(formData: FormData, formName: string): StandardizedFields {
+    const mapping = FORM_FIELD_MAPPINGS[formName];
+
+    if (!mapping) {
+        throw new Error(`No field mapping found for form: ${formName}. Please add mapping to FORM_FIELD_MAPPINGS.`);
+    }
+
+    // Extract email (required)
+    const email = formData.get(mapping.email) as string;
+    if (!email?.trim()) {
+        throw new Error(`Email field '${mapping.email}' is required but not found or empty.`);
+    }
+
+    // Extract full name (required) - handle both single field and first/last name combination
+    let fullName = "";
+    if (Array.isArray(mapping.fullName)) {
+        // Combine first and last name
+        const names = mapping.fullName
+            .map(fieldName => formData.get(fieldName) as string)
+            .filter(name => name?.trim())
+            .map(name => name.trim());
+        fullName = names.join(" ");
+    } else {
+        // Single name field
+        fullName = (formData.get(mapping.fullName) as string)?.trim() || "";
+    }
+
+    if (!fullName) {
+        const fieldNames = Array.isArray(mapping.fullName) ? mapping.fullName.join(", ") : mapping.fullName;
+        throw new Error(`Name field(s) '${fieldNames}' are required but not found or empty.`);
+    }
+
+    // Extract optional fields
+    const standardized: StandardizedFields = {
+        email: email.trim(),
+        fullName: fullName
+    };
+
+    if (mapping.phone) {
+        const phone = formData.get(mapping.phone) as string;
+        if (phone?.trim()) {
+            standardized.phone = phone.trim();
+        }
+    }
+
+    if (mapping.jobTitle) {
+        const jobTitle = formData.get(mapping.jobTitle) as string;
+        if (jobTitle?.trim()) {
+            standardized.jobTitle = jobTitle.trim();
+        }
+    }
+
+    if (mapping.company) {
+        const company = formData.get(mapping.company) as string;
+        if (company?.trim()) {
+            standardized.company = company.trim();
+        }
+    }
+
+    if (mapping.message) {
+        const message = formData.get(mapping.message) as string;
+        if (message?.trim()) {
+            standardized.message = message.trim();
+        }
+    }
+
+    return standardized;
 }
 
 /**
@@ -110,7 +245,7 @@ async function processFormSubmission(
     formData: FormData,
     formName: string,
     formSource: string
-): Promise<FormSubmissionData> {
+): Promise<{ rawData: FormSubmissionData; standardized: StandardizedFields }> {
     // Validate reCAPTCHA first to prevent spam
     const recaptchaToken = formData.get("g-recaptcha-response") as string;
     const captchaResponse = await validateCaptcha(recaptchaToken);
@@ -119,32 +254,23 @@ async function processFormSubmission(
         throw new Error(`reCAPTCHA validation failed: ${JSON.stringify(captchaResponse)}`);
     }
 
-    // Extract and clean form fields
-    const submissionData: FormSubmissionData = {
+    // Standardize the form data using field mappings
+    const standardized = standardizeFormData(formData, formName);
+
+    // Create raw data object for storage (preserves original field names)
+    const rawData: FormSubmissionData = {
         form: formName,
         source: formSource
     };
 
-    // Define expected form fields for easier maintenance
-    const formFields = [
-        "Email", "First-Name", "Last-Name",
-        "Phone-Number", "Job-Title", "Company", "Message"
-    ] as const;
-
-    // Extract only non-empty form fields
-    formFields.forEach(field => {
-        const value = formData.get(field) as string;
-        if (value?.trim()) {
-            submissionData[field] = value.trim();
+    // Store all form fields as they were submitted (for backup/debugging)
+    formData.forEach((value, key) => {
+        if (key !== "g-recaptcha-response" && typeof value === "string" && value.trim()) {
+            rawData[key] = value.trim();
         }
     });
 
-    // Validate required fields
-    if (!submissionData.Email) {
-        throw new Error("Email is required for form submission");
-    }
-
-    return submissionData;
+    return { rawData, standardized };
 }
 
 /**
@@ -167,12 +293,13 @@ async function storeSubmissionInDatabase(data: FormSubmissionData): Promise<void
  * Sends the form submission to Pipedrive CRM
  * Handles person creation/lookup and lead management
  */
-export async function sendSubmissionToPipedrive(
-    c: Context,
-    data: FormSubmissionData,
-): Promise<Response> {
+async function sendSubmissionToPipedrive(
+    data: StandardizedFields,
+    formName: string,
+    formSource: string
+): Promise<void> {
     try {
-        const email = data.Email!; // We've already validated this exists
+        const email = data.email;
 
         // Check if person already exists in Pipedrive
         const existingPerson = await findExistingPerson(email);
@@ -184,11 +311,7 @@ export async function sendSubmissionToPipedrive(
         const lead = await getOrCreateLead(person);
 
         // Add a note with the form submission details
-        await addSubmissionNote(lead.id, person.id, data);
-
-        return c.json({
-            existingPerson: JSON.stringify(person)
-        }, 200);
+        await addSubmissionNote(lead.id, person.id, data, formName, formSource);
 
     } catch (error) {
         console.error("Failed to send submission to Pipedrive:", error);
@@ -212,8 +335,8 @@ async function findExistingPerson(email: string): Promise<any | null> {
 /**
  * Creates a new person in Pipedrive with the form submission data
  */
-async function createNewPerson(data: FormSubmissionData): Promise<any> {
-    const fullName = `${data["First-Name"] || ""} ${data["Last-Name"] || ""}`.trim();
+async function createNewPerson(data: StandardizedFields): Promise<any> {
+    const fullName = data.fullName.trim();
 
     if (!fullName) {
         throw new Error("Person name is required to create Pipedrive entry");
@@ -222,12 +345,12 @@ async function createNewPerson(data: FormSubmissionData): Promise<any> {
     const personData = {
         name: fullName,
         email: [{
-            value: data.Email!,
+            value: data.email,
             primary: true,
             label: "work",
         }],
-        phone: data["Phone-Number"] ? [{
-            value: data["Phone-Number"],
+        phone: data.phone ? [{
+            value: data.phone,
             primary: true,
             label: "mobile",
         }] : [],
@@ -273,16 +396,15 @@ async function getOrCreateLead(person: any): Promise<{ id: number }> {
 /**
  * Creates a formatted note with the form submission details
  */
-function formatSubmissionNote(data: FormSubmissionData): string {
-    // Filter out metadata fields and create formatted note
+function formatSubmissionNote(data: StandardizedFields, formName: string, formSource: string): string {
+    // Create formatted note with standardized fields
     const noteFields = Object.entries(data)
-        .filter(([key]) => !["form", "source"].includes(key))
         .map(([key, value]) => `<span><strong>${key}:</strong> ${value}</span>`)
         .join("<br>");
 
     return `
-        <b>Form Submission - Source: ${data.form}</b><br>
-        <i>Submitted from: ${data.source}</i><br><br>
+        <b>Form Submission - Source: ${formName}</b><br>
+        <i>Submitted from: ${formSource}</i><br><br>
         ${noteFields}
     `;
 }
@@ -290,8 +412,8 @@ function formatSubmissionNote(data: FormSubmissionData): string {
 /**
  * Adds a note to both the lead and person in Pipedrive
  */
-async function addSubmissionNote(leadId: number, personId: number, data: FormSubmissionData): Promise<void> {
-    const note = formatSubmissionNote(data);
+async function addSubmissionNote(leadId: number, personId: number, data: StandardizedFields, formName: string, formSource: string): Promise<void> {
+    const note = formatSubmissionNote(data, formName, formSource);
 
     await addNoteToLeadAndPerson(leadId.toString(), personId, note);
 }
