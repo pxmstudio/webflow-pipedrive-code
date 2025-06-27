@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
 import { cors } from "hono/cors";
+import { formSubmission } from './routes/form-submission';
 
 export const config = {
   runtime: 'edge'
@@ -22,13 +23,7 @@ app.use(
   }),
 );
 
-app.get('/', (c) => {
-  return c.json({ message: 'Hello Hono!' })
-})
-
-app.get('/hello', (c) => {
-  return c.json({ message: 'Hello from Hono API!' })
-})
+app.post("/form-submission", formSubmission);
 
 // More specific 404 handler for API routes only
 app.notFound((c) => {
