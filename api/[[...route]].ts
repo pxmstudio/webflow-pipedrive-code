@@ -14,7 +14,7 @@ app.use(
   "*",
   cors({
     origin: [
-      "https://your-site.webflow.io"
+      "https://pipedrive-integration.webflow.io"
     ],
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
