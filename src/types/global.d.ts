@@ -9,6 +9,7 @@ interface Window {
         /** Google reCAPTCHA v3 site key */
         RECAPTCHA_V3_SITE_KEY: string;
     };
+    grecaptcha_version: string;
 }
 
 /**
